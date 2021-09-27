@@ -1,12 +1,10 @@
 import { resolve, isAbsolute, dirname, basename } from 'path';
 import { cwd } from 'process';
-import { readFile } from 'fs-extra';
+import { readFile, writeFile } from 'fs-extra';
 import { inspect } from 'util';
 import { parseStringPromise, Builder } from 'xml2js';
 
 const PackageName: string = require('../package.json').name;
-
-function writeTask() {}
 
 interface Task {
   outputFileName: string;
@@ -17,45 +15,65 @@ interface Task {
   }>;
 }
 
-function convertToBcpf(tasks: Array<Task>, outputLocation: string) {
-  const template = {
-    BandicutProjectFile: {
-      General: [{ Version: ['3.6.6.676'] }],
-      Setting: [{ Type: ['Cut'], Join: ['Yes'] }],
-      VideoItem: [
-        {
-          Index: ['0'],
-          Crc: ['0'],
-          VideoIndex: ['0'],
-          AudioIndex: ['0'],
-          Start: ['0'],
-          End: ['60000000'],
-          Title: ['Notitle'],
-          File: [
-            '',
-          ],
-        },
-      ],
-    },
-  };
+interface BcpfFile {
+  BandicutProjectFile: any;
+}
+
+function writeToDisk(
+  bcpfSet: Array<{
+    fileName: string;
+    bcpfRaw: string;
+  }>,
+  outputLocaiton: string
+) {
+  return Promise.all(
+    bcpfSet.map(({ fileName, bcpfRaw }) => {
+      console.log(bcpfRaw);
+
+      return writeFile(resolve(outputLocaiton, `${fileName}.bcpf`), bcpfRaw, {
+        flag: 'w+',
+        encoding: 'utf16le',
+      });
+    })
+  );
+}
+
+function convertToBcpf(tasks: Array<Task>): Array<BcpfFile> {
+  const BcpfStructures = [];
 
   for (let index = 0; index < tasks.length; index++) {
-    const element = tasks[index];
-    template.BandicutProjectFile.VideoItem.push({
-      Index: [`${index}`],
-      Crc: ['0'],
-      VideoIndex: ['0'],
-      AudioIndex: ['0'],
-      Start: [element.],
-      End: ['60000000'],
-      Title: ['Notitle'],
-      File: [
-        '',
-      ],
-    })
-  }
-  
+    const task = tasks[index];
 
+    BcpfStructures.push({
+      BandicutProjectFile: {
+        General: {
+          $: {
+            Version: '3.6.6.676',
+          },
+        },
+        Setting: {
+          $: {
+            Type: 'Cut',
+            Join: 'Yes',
+          },
+        },
+        VideoItem: task.clips.map(({ src, start, stop }, index) => ({
+          $: {
+            Index: [index],
+            Crc: ['0'],
+            VideoIndex: ['0'],
+            AudioIndex: ['0'],
+            Start: [start.slice(0, -1)],
+            End: [stop.slice(0, -1)],
+            Title: ['Notitle'],
+            File: [src],
+          },
+        })),
+      },
+    });
+  }
+
+  return BcpfStructures;
 }
 
 // 不处理 smm 所支持的多视频格式
@@ -147,8 +165,7 @@ export async function convert(
   }
 
   if (logger) {
-    logger(`${PackageName}: Start Parsing xtl from ${inputPath}`);
-    // logger(`${PackageName}: Output location was ${output}`)
+    logger(`${PackageName}: Starting parsing ${inputPath}`);
   }
 
   try {
@@ -167,11 +184,16 @@ export async function convert(
       },
     });
 
-    const bufferSet = convertToBcpf(tasks, outputPath).map((item) =>
-      builder.buildObject(item)
-    );
+    const BcpfSet = convertToBcpf(tasks).map((item, index) => ({
+      fileName: tasks[index].outputFileName,
+      bcpfRaw: builder.buildObject(item),
+    }));
 
-    //
+    if (logger) {
+      logger(`${PackageName}: location of output is ${outputPath}`);
+    }
+
+    await writeToDisk(BcpfSet, outputPath);
   } catch (error) {
     console.log(error + '');
   }

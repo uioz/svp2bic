@@ -1,1 +1,1 @@
-export declare function convert(input: string, output?: string, logger?: (log: string) => void): Promise<void>;
+export declare function convert(inputPath: string, outputPath?: string, logger?: (log: string) => void): Promise<void>;
